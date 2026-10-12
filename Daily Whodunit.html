@@ -1,0 +1,436 @@
+<!doctype html>
+<!--
+  DAILY WHODUNIT
+  A once-a-day murder mystery. One file, no dependencies (fonts load from Google Fonts with fallbacks).
+
+  HOW IT WORKS
+  - Each day maps to one case (CASES[dayNum % CASES.length]). DAY0 is the launch date; the menu shows every day since.
+  - Rule: exactly one suspect lied to the police, and that is the killer.
+  - Questioning a suspect (first one free, then -15 points each) reveals their statement and, for most suspects, an exhibit.
+  - Wrong accusation: -20 points. Three wrong accusations ends the case.
+  - Progress and streaks are saved in localStorage.
+
+  ADDING A CASE (append to the CASES array in the script)
+  { title, intro, scene:"lib|vault|train", at:{suspectIndex:[x,y]}, place, spots:{suspectIndex:[[glyph,x,y]]},
+    sus:[[ "", name, role, "Says: statement", "evidence text or empty" ], ... 5 suspects ],
+    culprit: suspectIndex, reveal: "explanation" }
+  New scenes go in the SC object. Each case needs one claim that can be disproved from the map.
+-->
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Daily Whodunit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Caveat:wght@600&display=swap">
+<style>
+:root{--desk:#2b4740;--ondesk:#ece6d2;--paper:#e8e2d0;--paper2:#d9d2bb;--ink:#1c1b18;--mute:#5d5a4e;--red:#b32d2b;--line:#b3ab92;--tape:rgba(228,214,150,.8);
+--disp:Anton,Impact,"Arial Narrow",sans-serif;--type:"Special Elite","Courier New",monospace;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){
+:root:not([data-theme="light"]){--desk:#13211d;--paper:#d6d0bc;--paper2:#c6bfa7;--red:#c23431}
+}
+:root[data-theme="dark"]{--desk:#13211d;--paper:#d6d0bc;--paper2:#c6bfa7;--red:#c23431}
+*,*:before,*:after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--desk);color:var(--ondesk);font-family:var(--type);line-height:1.5}
+#app{max-width:1060px;margin:0 auto;padding:22px 18px 16px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:3px solid var(--ondesk);outline-offset:3px}
+p{margin:0}
+.mast{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+h1{font:400 clamp(34px,10vw,46px)/1 var(--disp);text-transform:uppercase;letter-spacing:.02em;margin:0}
+.sub{font-size:14px;opacity:.8;margin-top:6px}
+.menu{width:46px;height:46px;border:2px solid var(--ondesk);background:transparent;border-radius:3px;display:grid;place-items:center;flex:none}
+.menu svg{width:24px;height:24px;stroke:var(--ondesk);stroke-width:2.2;stroke-linecap:round}
+.streak{display:flex;gap:22px;margin-top:14px;font-size:14px;opacity:.9}
+.streak b{font:400 20px var(--disp);letter-spacing:.04em;margin-left:4px}
+.file,.slip,.s,.verdict,.modal{color:var(--ink)}
+.file{position:relative;background:var(--paper);margin-top:34px;padding:22px 20px 20px;border-radius:2px 4px 4px 4px;box-shadow:0 2px 0 rgba(0,0,0,.3),0 16px 26px -14px rgba(0,0,0,.7)}
+.tab{position:absolute;left:0;top:-27px;background:var(--paper);padding:5px 18px 3px;border-radius:7px 7px 0 0;font:400 16px var(--disp);letter-spacing:.06em}
+.file h2{font:400 30px/1.05 var(--disp);margin:0 0 10px;letter-spacing:.01em}
+.file p{font-size:15.5px}
+h3{display:flex;align-items:center;gap:12px;font:400 21px var(--disp);letter-spacing:.07em;margin:34px 0 16px}
+h3:after{content:"";flex:1;border-top:2px dashed rgba(236,230,210,.35)}
+.exh{display:grid;gap:18px}
+.slip{position:relative;background:var(--paper);padding:20px 16px 14px;box-shadow:0 8px 14px -8px rgba(0,0,0,.65)}
+.slip:before{content:"";position:absolute;top:-9px;left:50%;width:72px;height:18px;background:var(--tape);transform:translateX(-50%) rotate(-2deg)}
+.r0{transform:rotate(-.7deg)}
+.r1{transform:rotate(.6deg)}
+.r2{transform:rotate(-.4deg)}
+.r3{transform:rotate(.5deg)}
+.lbl{display:block;font:400 14px var(--disp);letter-spacing:.09em;color:var(--red);margin-bottom:4px}
+.slip p{font-size:15px}
+.sus{display:grid;gap:12px}
+.s{position:relative;display:grid;grid-template-columns:86px 1fr;padding:0;border:0;text-align:left;background:var(--paper);border-radius:3px;overflow:hidden;box-shadow:0 6px 12px -8px rgba(0,0,0,.7);transition:transform .12s}
+.s:not(:disabled):hover{transform:translateY(-2px)}
+.s:disabled{cursor:default}
+.plate{position:relative;display:grid;place-items:center;background:var(--paper2);border-right:2px solid var(--ink);min-height:92px}
+.plate:before{content:"";position:absolute;left:0;top:0;bottom:0;width:9px;background:repeating-linear-gradient(to bottom,var(--ink) 0 1.5px,transparent 1.5px 9px)}
+.plate b{font:400 54px/1 var(--disp);margin-left:6px}
+.plate i{position:absolute;right:6px;bottom:5px;font:normal 12px var(--type);background:var(--ink);color:var(--paper);padding:0 6px}
+.info{display:flex;flex-direction:column;padding:12px 14px;gap:1px}
+.info strong{font:400 21px/1.15 var(--disp);letter-spacing:.02em}
+.info em{font-style:normal;font-size:13px;color:var(--mute)}
+.info small{font-size:14px;margin-top:4px}
+.s.sel{box-shadow:0 0 0 3px var(--red),0 6px 12px -8px rgba(0,0,0,.7)}
+.s.sel .plate{background:var(--red)}
+.s.sel .plate b{color:var(--paper)}
+.s.cleared .plate,.s.cleared .info{opacity:.4}
+.s[data-stamp]:after{content:attr(data-stamp);position:absolute;right:14px;top:50%;transform:translateY(-50%) rotate(-9deg);border:3px double var(--red);color:var(--red);padding:2px 12px;font:400 22px var(--disp);letter-spacing:.08em;text-transform:uppercase;background:rgba(232,226,208,.85)}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;bottom:0;z-index:5;margin-top:28px;padding:12px 0 calc(env(safe-area-inset-bottom,0px) + 10px);background:var(--desk);border-top:2px dashed rgba(236,230,210,.3)}
+.lives{font-size:14px}
+.accuse{font:400 20px var(--disp);letter-spacing:.07em;padding:12px 24px;background:var(--red);color:#fff3ec;border:3px double rgba(255,243,236,.75);border-radius:3px;transform:rotate(-1deg)}
+.accuse:disabled{background:transparent;color:rgba(236,230,210,.6);border:2px dashed rgba(236,230,210,.4);transform:none;cursor:not-allowed}
+.verdict{text-align:left;margin-top:26px;background:var(--paper);padding:26px 20px 20px;box-shadow:0 16px 26px -14px rgba(0,0,0,.7)}
+.sw{text-align:center;margin:6px 0 0}
+.verdict .sub{text-align:center;margin:0 0 18px;opacity:1;color:var(--mute)}
+.verdict h2{font:400 28px/1.1 var(--disp);margin:0 0 10px;text-align:center;letter-spacing:.01em}
+.verdict .score{text-align:center}
+.endbtns{display:grid;gap:12px;margin-top:22px}
+.endbtns .accuse{transform:none}
+.plain{padding:12px;border:2px solid var(--ondesk);background:transparent;border-radius:3px;font:400 18px var(--disp);letter-spacing:.06em;color:var(--ondesk)}
+.plain:hover{background:rgba(255,255,255,.1)}
+.stamp{display:inline-block;font:400 40px/1 var(--disp);letter-spacing:.06em;text-transform:uppercase;color:var(--red);border:4px double var(--red);padding:6px 16px;transform:rotate(-4deg);animation:thump .5s cubic-bezier(.2,1.6,.4,1)}
+.lost .stamp{color:var(--ink);border-color:var(--ink)}
+@keyframes thump{from{transform:rotate(-4deg) scale(2.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){
+.stamp{animation:none}
+.s{transition:none}
+}
+.score{font:400 64px/1 var(--disp);margin:18px 0 8px}
+.score small{font-size:22px;color:var(--mute)}
+.verdict pre{white-space:pre-wrap;font:inherit;font-size:15px;background:var(--paper2);border:2px dashed var(--line);padding:10px 12px;margin:16px 0 14px}
+.note{font-size:13px;color:var(--mute);margin-top:12px}
+.ov{position:fixed;inset:0;z-index:10;background:rgba(6,14,11,.75);display:flex;align-items:flex-start;justify-content:center;padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 16px);overflow-y:auto}
+.modal{width:100%;max-width:440px;background:var(--paper);padding:18px 18px 12px;box-shadow:0 20px 40px rgba(0,0,0,.6)}
+.mh{display:flex;justify-content:space-between;align-items:center}
+.mh h2{font:400 28px var(--disp);margin:0;letter-spacing:.02em}
+#closem{width:40px;height:40px;border:0;background:transparent;font-size:20px}
+.modal .note{margin:4px 0 8px}
+.day{display:grid;grid-template-columns:1fr auto;width:100%;text-align:left;padding:10px 6px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}
+.day:hover,.day.cur{background:var(--paper2)}
+.dn{font:400 18px var(--disp);letter-spacing:.04em}
+.dd{font-size:13px;color:var(--mute)}
+.ds{grid-column:1/3;font-size:14px}
+.ds.bad{color:var(--red)}
+.narrow{max-width:560px;margin:0 auto}
+.cols{display:grid;gap:8px}
+.right h3{margin-top:34px}
+.tabs{display:none;grid-template-columns:1fr 1fr;margin-top:22px;border:2px solid var(--ondesk);border-radius:3px;overflow:hidden}
+.tabs button{padding:10px 6px;border:0;background:transparent;font:400 17px var(--disp);letter-spacing:.06em;color:var(--ondesk)}
+.tabs button.on{background:var(--ondesk);color:var(--desk)}
+@media (min-width:900px){
+.cols{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:34px;align-items:start}
+.exh{grid-template-columns:1fr 1fr}
+.mast{margin-bottom:0}
+}
+@media (max-width:899px){
+.tabs{display:grid}
+.pane.off{display:none}
+.pane h3{display:none}
+.exh{margin-top:26px}
+.sus{margin-top:22px}
+}
+.exh{position:relative}
+.string{position:absolute;left:0;top:0;z-index:0;overflow:visible;pointer-events:none;filter:drop-shadow(0 2px 1px rgba(0,0,0,.45))}
+.string path{fill:none;stroke:#e5504a;stroke-width:2.6;stroke-linecap:round}
+.slip:after{content:"";position:absolute;top:-7px;left:50%;width:15px;height:15px;border-radius:50%;transform:translateX(-50%);background:radial-gradient(circle at 35% 30%,#ff9a90,#c9312c 55%,#7a1512);box-shadow:0 2px 3px rgba(0,0,0,.5)}
+.file .rule{margin-top:12px;padding:8px 10px;border-left:4px solid var(--red);background:var(--paper2);font-size:14px}
+/* corkboard */
+:root{--cork:#b88a58;--wood:#6a4426;--bw:clamp(7px,2vw,14px)}
+@media (prefers-color-scheme:dark){
+:root:not([data-theme="light"]){--cork:#7a5836;--wood:#3d2815}
+}
+:root[data-theme="dark"]{--cork:#7a5836;--wood:#3d2815}
+html{background:var(--wood)}
+body{color:var(--ink);min-height:100vh;border:var(--bw) solid var(--wood);background-color:var(--cork);
+background-image:radial-gradient(rgba(80,48,20,.38) 1px,transparent 1.6px),radial-gradient(rgba(255,232,190,.26) 1px,transparent 1.6px),radial-gradient(rgba(60,32,12,.28) 1.6px,transparent 2.2px);
+background-size:7px 7px,11px 11px,17px 17px;background-position:0 0,3px 4px,8px 2px;box-shadow:inset 0 0 80px rgba(50,28,10,.6)}
+button:focus-visible{outline-color:var(--ink)}
+.file:before,.verdict:before,.modal:before,.bar:before,.mast>div:before,.s:before{content:"";position:absolute;width:26px;height:5px;top:7px;left:14px;border-radius:2px;background:linear-gradient(#f4f6f7,#8c9298);box-shadow:0 1.5px 1px rgba(0,0,0,.55);rotate:-6deg;z-index:3}
+.verdict,.modal,.mast>div{position:relative}
+.s:before{left:auto;right:12px;top:6px;rotate:5deg}
+.s:nth-child(odd){rotate:-.5deg}
+.s:nth-child(even){rotate:.4deg}
+.slip:before{content:none}
+.mast>div{background:var(--paper);padding:14px 20px 10px;rotate:-.8deg;box-shadow:0 8px 14px -8px rgba(0,0,0,.7)}
+.mast h1{color:var(--ink)}
+.sub{opacity:.75}
+.menu{background:var(--paper);border-color:var(--ink);box-shadow:0 6px 10px -6px rgba(0,0,0,.7)}
+.menu svg{stroke:var(--ink)}
+.streak{width:fit-content;background:var(--paper);color:var(--ink);padding:6px 16px;rotate:.6deg;opacity:1;margin-top:20px;box-shadow:0 6px 10px -6px rgba(0,0,0,.7)}
+h3{display:inline-block;background:var(--paper);color:var(--ink);padding:4px 16px 2px;rotate:-1deg;margin:34px 0 20px;box-shadow:0 5px 8px -5px rgba(0,0,0,.7)}
+h3:after{content:none}
+.string path{stroke:#c9302a}
+.bar{bottom:10px;background:var(--paper);color:var(--ink);border-top:0;border-radius:3px;padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 12px);box-shadow:0 -4px 14px rgba(0,0,0,.35),0 8px 14px -8px rgba(0,0,0,.7)}
+.bar .accuse:disabled{color:var(--mute);border-color:var(--line)}
+.tabs{background:var(--paper);border-color:var(--ink);box-shadow:0 6px 10px -6px rgba(0,0,0,.7)}
+.tabs button{color:var(--ink)}
+.tabs button.on{background:var(--ink);color:var(--paper)}
+.plain{background:var(--paper);color:var(--ink);border-color:var(--ink);box-shadow:0 6px 10px -6px rgba(0,0,0,.7)}
+.plain:hover{background:var(--paper2)}
+.verdict{box-shadow:0 10px 18px -10px rgba(0,0,0,.7)}
+/* paper variety */
+.file,.tab{background:#e2c88b}
+.file .rule{background:rgba(255,255,255,.4)}
+.slip.r0{background:radial-gradient(circle at 15px 30px,rgba(70,44,18,.75) 0 5px,transparent 5.5px),radial-gradient(circle at 15px calc(100% - 30px),rgba(70,44,18,.75) 0 5px,transparent 5.5px),linear-gradient(90deg,transparent 38px,rgba(200,70,60,.55) 38px 40px,transparent 40px),#f6f2e4;padding-left:52px}
+.slip.r0 p,.slip.r3 p{line-height:24px;background:repeating-linear-gradient(to bottom,transparent 0 23px,rgba(90,130,175,.45) 23px 24px)}
+.slip.r1{background:linear-gradient(#f7e377,#f1d450);padding:24px 18px 20px;border-radius:2px 2px 18px 2px/2px 2px 6px 2px;box-shadow:0 12px 12px -8px rgba(0,0,0,.6),inset 0 -14px 14px -14px rgba(120,90,0,.35)}
+.slip.r1 p{font:600 22px/1.15 Caveat,"Bradley Hand","Segoe Script",cursive;color:#3b3000}
+.slip.r2{background:#eceee7;border:1px solid #bfc4b8;padding-top:40px}
+.slip.r2:before{content:"Evidence log";position:absolute;left:0;right:0;top:0;height:26px;background:var(--ink);color:#eceee7;font:400 13px/26px var(--disp);letter-spacing:.1em;padding-left:12px}
+.slip.r3{background:linear-gradient(transparent 45px,#c9473c 45px 47px,transparent 47px),#fbf8ee;border-radius:3px;padding-top:20px}
+.slip.r3 .lbl{margin-bottom:14px}
+/* suspect cards */
+.s{background:#f1ecdc;grid-template-columns:96px 1fr}
+.plate{--ph:#b9c2c4;--hr:16px;--sil:radial-gradient(circle var(--hr) at 54% 36%,#45443f 98%,transparent 100%),radial-gradient(ellipse 38px 34px at 54% 100%,#45443f 98%,transparent 100%);background:var(--sil),var(--ph);min-height:110px}
+.s:nth-child(2) .plate{--ph:#c9baa2;--hr:15px}
+.s:nth-child(3) .plate{--ph:#a9bcae;--hr:17px}
+.s:nth-child(4) .plate{--ph:#c4aeb5;--hr:16px}
+.s:nth-child(5) .plate{--ph:#b2b6cb;--hr:18px}
+.plate b{display:none}
+.plate i{left:0;right:0;bottom:0;padding:2px 0;text-align:center;background:var(--ink);color:var(--paper);font:400 13px var(--disp);letter-spacing:.1em}
+.plate i:before{content:"No. "}
+.s.sel .plate{background:var(--sil),var(--red)}
+.info{padding:14px 14px 12px}
+.info small{border-left:3px solid var(--line);padding-left:9px;margin-top:8px;font-size:14px}
+.st{display:block;font:400 12px var(--disp);letter-spacing:.09em;color:var(--red);margin-bottom:2px}
+/* questioning + silhouettes */
+.plate{--sil:radial-gradient(circle var(--hr) at 54% calc(100% - 30px - var(--hr)),#45443f 98%,transparent 100%),radial-gradient(ellipse 38px 34px at 54% 100%,#45443f 98%,transparent 100%)}
+.s:not(:disabled):hover{transform:none}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.qbtn,.pick{font:400 15px var(--disp);letter-spacing:.06em;padding:6px 12px;border:2px solid var(--ink);border-radius:3px;color:var(--ink);background:transparent}
+.qbtn{background:#f2c230;color:#2a2105}
+.qbtn:hover{background:#ffd54a}
+.pick:hover{background:var(--paper2)}
+.pick.on{background:var(--red);border-color:var(--red);color:#fff3ec}
+.info small.unk{border-left:3px dashed var(--line);color:var(--mute)}
+.src{display:block;font-size:12px;color:var(--mute);margin-bottom:6px}
+.slip.r1 .src{color:#6b5a10}
+.empty{background:rgba(255,255,255,.2);border:2px dashed rgba(60,36,14,.55);border-radius:3px;padding:18px;font-size:15px}
+/* scene photo + gap between head and body */
+.plate{--sil:radial-gradient(circle var(--hr) at 54% calc(100% - 50px - var(--hr)),#45443f 98%,transparent 100%),radial-gradient(ellipse 38px 34px at 54% calc(100% - 8px),#45443f 98%,transparent 100%)}
+.scene{margin:26px 0 0;background:#f8f5ec;padding:10px 10px 38px;position:relative;box-shadow:0 10px 16px -8px rgba(0,0,0,.7);rotate:-.5deg;color:#2a2518}
+.scene svg{display:block;width:100%;height:auto;border:1px solid #cfc7b2}
+.scene figcaption{position:absolute;left:14px;bottom:7px;font:600 20px/1 Caveat,"Bradley Hand","Segoe Script",cursive}
+.scene:before{content:"";position:absolute;width:15px;height:15px;top:-7px;left:50%;border-radius:50%;transform:translateX(-50%);background:radial-gradient(circle at 35% 30%,#ff9a90,#c9312c 55%,#7a1512);box-shadow:0 2px 3px rgba(0,0,0,.5);z-index:3}
+.scene .rl{font:400 11px "Special Elite","Courier New",monospace;fill:#fff;stroke:#1d2a33;stroke-width:3px;paint-order:stroke;stroke-linejoin:round}
+.scene .ev{filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
+.scene svg{border-radius:3px}
+.scene{padding:10px}
+.scene figcaption{position:static;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;margin-top:8px}
+.scene figcaption small{font:400 12px "Special Elite","Courier New",monospace;color:#5d5a4e}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const CASES=[
+{title:"The Candlestick in the Library",intro:"Lord Hale was found dead in his library, struck with a brass candlestick, when a scream rang out at 9:45 PM. Five people were in the house. Question each of them to hear their statement and see what turns up.",
+sus:[["","Mr. Finch","The butler","Says: Rosa and I were setting the dining table together from 9:00 until the scream.","The library clock was smashed in the struggle and stopped at 9:40. A still-warm cigar stub lies just outside the library's garden door."],["","Rosa","The chef","Says: Finch and I were setting the dining table together from 9:00 until the scream.",""],["","Clara","The niece","Says: I was upstairs on the phone with my fiancé from 9:20 to 9:50. I watched Dr. Voss in the garden from my window. Wears size 6 heels.","Phone records show Clara's call ran from 9:20 to 9:50 on the upstairs landline, without a break."],["","Dr. Voss","The family doctor","Says: I was in the garden having a cigar from 9:15 until the scream. Wears size 9 shoes.","Dr. Voss points out boot prints on the wet lawn, running from the library's garden door to the greenhouse and back. They are size 11."],["","Tom","The gardener","Says: I was in the greenhouse until the scream. At 9:30 I saw Clara cross the lawn toward the library. Wears size 11 boots.","Tom admits Hale fired him this morning. The signed dismissal letter lies on Hale's desk."]],
+culprit:4,scene:"lib",at:{0:[60,98],1:[98,98],2:[30,139],3:[360,70],4:[352,205]},place:"Floor plan: Hale Manor, ground floor",spots:{0:[["clock",262,28],["stub",302,86]],2:[["phone",80,136]],3:[["trail",304,72]],4:[["doc",225,52]]},reveal:"Tom was the liar. Fired that morning, he slipped into the library through the garden door, then invented a sighting of Clara to throw suspicion on her. The cigar stub only proved Dr. Voss was where he said he was. The hedge also blocks the view from the greenhouse to the library lawn, so Tom's sighting was impossible."},
+{title:"The Vanishing Vermeer",intro:"Gallery owner Anders Lund was found dead in the vault beside an empty frame during the opening-night party. Five people had reason to be near it. Question each of them to hear their statement and see what turns up.",
+sus:[["","Marguerite","The curator","Says: I never left my office. Ollie brought me tea at ten. From my window I watched the guests arrive at the front entrance.","Marguerite hands over the vault log. Lund died at 10:12, and the vault opens only with a staff keycard, used once, at 10:12. Staff are Marguerite, Ollie, and Priya."],["","Ollie","The night guard","Says: I never left the front desk all night, and Marguerite never came by.","Ollie plays back the front-desk camera. It shows him seated at his post from 8 PM to midnight. He never stood up."],["","Priya","Artist-in-residence","Says: Dev sat in the back row for my whole talk, 10:00 to 10:30.","Priya found Lund's phone outside the vault. It holds an unsent text to the police: The Vermeer on our wall is a forgery. Marguerite has known for years."],["","Dev","The collector","Says: I sat in the back row for Priya's whole talk, 10:00 to 10:30.","Dev admits Lund rejected his offer for the Vermeer that afternoon. Staff heard the two of them shouting."],["","Beatrix","The art critic","Says: I left Priya's talk early and spent the rest of the evening in the coat-check lounge, writing my review.",""]],
+culprit:0,scene:"vault",at:{0:[50,80],1:[180,240],2:[300,130],3:[330,232],4:[48,238]},place:"Floor plan: the gallery",spots:{0:[["reader",282,40]],1:[["cam",238,222]],2:[["phone",262,84]],3:[["doc",36,48]]},reveal:"Marguerite lied. Ollie never left his desk, so nobody brought her tea, and her alibi fell apart. Lund had discovered her forgery scheme, and she used her keycard at 10:12. Her office window faces the back of the building, so she could never have watched the front entrance."},
+{title:"Poison on the Night Express",intro:"Mr. Aldous Crane was found dead in compartment 7 with an empty glass of whisky beside him. The train is hours from the next station. Question each passenger to hear their statement and see what turns up.",
+sus:[["","Marsh","The conductor","Says: Nurse Odette and I were together in the baggage car from 8:30 to 9:00, securing a stretcher.","Marsh shows the baggage car log, signed by him and Odette at 8:30 and again at 9:00."],["","Countess Ilse","A passenger","Says: It was Mr. Pike. I watched him tamper with Crane's whisky.",""],["","Mr. Pike","A medicine salesman","Says: It was the student. From my table in the dining car I watched Kit go to compartment 7 and tamper with Crane's whisky.","Pike's sample case holds a bottle of digitalis tincture with its seal broken."],["","Odette","A nurse","Says: Conductor Marsh and I were together in the baggage car from 8:30 to 9:00, securing a stretcher.","Odette examines Crane. He died of digitalis in his whisky, between 8:30 and 9:00. Her own medical bag holds some digitalis."],["","Kit","A student","Says: Mr. Pike is lying. I never went near that glass.","Kit points to the dining car steward, who confirms he played cards at the corner table from 8:20 until 9:00, in full view of the room."]],
+culprit:2,scene:"train",vh:140,gs:.6,my:22,at:{0:[62,84],2:[150,68],3:[100,56]},place:"Top-down layout: the night express",spots:{0:[["book",93,83]],2:[["case",260,64]],3:[["glass",356,66]],4:[["cards",180,84]]},reveal:"Pike was the liar. Kit was playing cards in front of the whole dining car, so Pike's accusation was false, and the Countess told the truth. Pike dosed the whisky with digitalis from his own sample case. The dining car is shut off from the sleeping car by a closed door, so he could not have watched Kit from his table."}
+];
+
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,'0');
+const now=new Date();
+const DAY0=Math.floor(Date.UTC(2026,9,6)/864e5);
+const TODAY=Math.floor(Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())/864e5);
+const dkey=n=>{const d=new Date(n*864e5);return d.getUTCFullYear()+'-'+pad(d.getUTCMonth()+1)+'-'+pad(d.getUTCDate())};
+let S,key,C,caseNo,dayNum;
+function setDay(n){dayNum=n;key=dkey(n);caseNo=n-DAY0+1;C=CASES[((n%CASES.length)+CASES.length)%CASES.length];S=load('ww3:'+key,{asked:[],wrong:[],done:false,won:false});sel=null;review=false;tab='ev'}
+function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+let sel=null,menuOpen=false,review=false,tab='ev';
+let stats=load('ww2:stats',{streak:0,last:'',played:0,wins:0});
+setDay(TODAY);
+const score=()=>S.won?Math.max(10,100-15*Math.max(0,S.asked.length-1)-20*S.wrong.length):0;
+const shareText=()=>`Daily Whodunit #${caseNo}\n`+'🔎'.repeat(Math.max(1,S.asked.length))+'❌'.repeat(S.wrong.length)+(S.won?'✅':'💀')+`\nScore: ${score()}/100`;
+function finish(won){S.done=true;S.won=won;stats.played++;if(won)stats.wins++;
+ if(dayNum===TODAY){if(won)stats.streak=stats.last===dkey(TODAY-1)?stats.streak+1:1;else stats.streak=0;stats.last=key}
+ save('ww2:stats',stats)}
+const LET='ABCD';
+function archiveHTML(){
+ let rows='',open=0;
+ for(let n=TODAY;n>=DAY0;n--){
+  const r=load('ww3:'+dkey(n),null);
+  let st='Not played',cl='';
+  if(r&&r.done){if(r.won)st='Solved, '+Math.max(10,100-15*Math.max(0,r.asked.length-1)-20*r.wrong.length)+' points';else{st='Culprit escaped';cl=' bad'}}
+  else if(r&&(r.asked.length||r.wrong.length))st='In progress';
+  if(!(r&&r.done))open++;
+  rows+=`<button class="day${n===dayNum?' cur':''}" data-n="${n}"><span class="dn">Case #${n-DAY0+1}${n===TODAY?' (today)':''}</span><span class="dd">${new Date(n*864e5).toLocaleDateString(undefined,{month:'short',day:'numeric',timeZone:'UTC'})}</span><span class="ds${cl}">${st}</span></button>`;
+ }
+ return `<div class="ov" role="dialog" aria-modal="true" aria-label="Case archive"><div class="modal"><div class="mh"><h2>Case archive</h2><button id="closem" aria-label="Close">\u2715</button></div><p class="note">${open} case${open===1?'':'s'} still open. Pick a day to play it.</p>${rows}</div></div>`;
+}
+function drawStrings(){
+ const ex=document.querySelector('.exh');if(!ex)return;
+ const old=ex.querySelector('svg.string');if(old)old.remove();
+ const sl=[...ex.querySelectorAll('.slip')];if(sl.length<2)return;
+ const R=ex.getBoundingClientRect();if(!R.width)return;
+ const pts=sl.map(e=>{const r=e.getBoundingClientRect();return [r.left-R.left+r.width/2,r.top-R.top+3]});
+ let d='';
+ for(let i=1;i<pts.length;i++){
+  const a=pts[i-1],b=pts[i],len=Math.hypot(b[0]-a[0],b[1]-a[1]);
+  const mx=(a[0]+b[0])/2+(i%2?22:-22),my=(a[1]+b[1])/2+Math.min(46,len*.14);
+  d+=`M${a[0].toFixed(1)} ${a[1].toFixed(1)}Q${mx.toFixed(1)} ${my.toFixed(1)} ${b[0].toFixed(1)} ${b[1].toFixed(1)}`;
+ }
+ ex.insertAdjacentHTML('afterbegin',`<svg class="string" width="${R.width}" height="${R.height}" aria-hidden="true"><path d="${d}"/></svg>`);
+}
+const GL={
+ clock:(x,y)=>`<g transform="translate(${x} ${y})"><circle r="13" fill="#f3eee0" stroke="#222" stroke-width="2"/><path d="M0 0L-6 4M0 0L-4-6" stroke="#222" stroke-width="2" stroke-linecap="round"/></g>`,
+ stub:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-9" y="-3" width="18" height="6" rx="2" fill="#6b4a2b" stroke="#fff" stroke-width=".8"/><rect x="4" y="-3" width="5" height="6" rx="2" fill="#e8793a"/></g>`,
+ trail:(x,y)=>`<g transform="translate(${x} ${y})" fill="#2a1a0c" stroke="#fff" stroke-width=".8"><ellipse rx="3.5" ry="6"/><ellipse cx="2" cy="22" rx="3.5" ry="6"/><ellipse cx="4" cy="44" rx="3.5" ry="6"/><ellipse cx="6" cy="66" rx="3.5" ry="6"/><ellipse cx="8" cy="88" rx="3.5" ry="6"/></g>`,
+ doc:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-12" y="-9" width="24" height="18" fill="#f3eee0" stroke="#222" stroke-width="1.5"/><path d="M-8-3H8M-8 1H5M-8 5H1" stroke="#777" stroke-width="1.5"/></g>`,
+ phone:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-13" y="-6" width="26" height="12" rx="4" fill="#222" stroke="#fff" stroke-width=".8"/><circle r="3" fill="#888"/></g>`,
+ reader:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-9" y="-14" width="18" height="28" rx="2" fill="#2a2f33" stroke="#9aa5ac"/><circle cy="-6" r="3" fill="#4fd08c"/><rect x="-5" y="2" width="10" height="3" fill="#111"/></g>`,
+ cam:(x,y)=>`<g transform="translate(${x} ${y})"><path d="M-14 0L-80 -34V34Z" fill="rgba(255,255,255,.16)"/><rect x="-14" y="-7" width="22" height="14" rx="2" fill="#222" stroke="#9aa5ac"/><circle cx="12" r="6" fill="#111" stroke="#9aa5ac"/><circle cx="12" r="2" fill="#c9302a"/></g>`,
+ glass:(x,y)=>`<g transform="translate(${x} ${y})"><circle r="8" fill="#d9a441" stroke="#eee" stroke-width="1.5"/><circle r="4" fill="#f0c36a"/></g>`,
+ case:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-16" y="-9" width="32" height="20" rx="3" fill="#7b5230" stroke="#fff" stroke-width="1"/><path d="M-5-9V-13H5V-9" fill="none" stroke="#fff" stroke-width="2"/></g>`,
+ cards:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-12" y="-8" width="16" height="22" rx="2" fill="#fff" stroke="#222" transform="rotate(-12)"/><rect x="-4" y="-8" width="16" height="22" rx="2" fill="#fff" stroke="#222" transform="rotate(10)"/></g>`,
+ book:(x,y)=>`<g transform="translate(${x} ${y})"><rect x="-13" y="-9" width="26" height="18" rx="2" fill="#2f5b46" stroke="#fff" stroke-width="1"/><path d="M-8-3H8M-8 1H8" stroke="#cfe3d8" stroke-width="1.5"/></g>`
+};
+const DEFS=`<defs>
+<pattern id="wd" width="22" height="9" patternUnits="userSpaceOnUse"><rect width="22" height="9" fill="#c8a06a"/><path d="M0 .5H22M11 .5V9" stroke="#a5794a"/></pattern>
+<pattern id="dk" width="22" height="9" patternUnits="userSpaceOnUse"><rect width="22" height="9" fill="#8c5e3d"/><path d="M0 .5H22M7 .5V9" stroke="#6c452c"/></pattern>
+<pattern id="mb" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="20" fill="#e6e1d4"/><rect width="10" height="10" fill="#d3ccbb"/><rect x="10" y="10" width="10" height="10" fill="#d3ccbb"/></pattern>
+<pattern id="kt" width="12" height="12" patternUnits="userSpaceOnUse"><rect width="12" height="12" fill="#f0ece0"/><rect width="6" height="6" fill="#9bb7c4"/><rect x="6" y="6" width="6" height="6" fill="#9bb7c4"/></pattern>
+<pattern id="cp" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#7d3b4d"/><circle cx="2" cy="2" r="1" fill="#93526a"/></pattern>
+<pattern id="gs" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill="#62a055"/><circle cx="3" cy="3" r="1" fill="#79b86a"/><circle cx="8" cy="7" r="1" fill="#52904a"/></pattern>
+<pattern id="pv" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#7b8189"/><path d="M0 8H16M8 0V8M0 8V16" stroke="#6a7078"/></pattern>
+<pattern id="bl" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#6f6a60"/><circle cx="2" cy="2" r="1" fill="#8a847a"/><circle cx="6" cy="6" r="1" fill="#59544c"/></pattern>
+<pattern id="bk" width="12" height="9" patternUnits="userSpaceOnUse"><rect width="12" height="9" fill="#2b1a0e"/><rect x="1" y="1" width="3" height="8" fill="#8a3b2e"/><rect x="5" y="2" width="3" height="7" fill="#c9a24a"/><rect x="9" y="1" width="2" height="8" fill="#3f6b57"/></pattern>
+<filter id="sh" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="1.5" stdDeviation="1.6" flood-opacity=".5"/></filter></defs>`;
+const BG=f=>`${DEFS}<rect width="400" height="260" fill="url(#${f})"/>`;
+const WL='#2d2723';
+const lb=(x,y,t)=>`<text class="rl" x="${x}" y="${y}">${t}</text>`;
+const rm=(x,y,w,h,l,f='wd',t=4)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#${f})" stroke="${WL}" stroke-width="${t}"/>`+(l?lb(x+7,y+15,l):'');
+const dr=(x,y,w,h)=>{const H=w>=h;return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#e2d3b3"/><path d="${H?`M${x} ${y+h/2}V${y+h/2-w}A${w} ${w} 0 0 1 ${x+w} ${y+h/2}`:`M${x+w/2} ${y}H${x+w/2+h}A${h} ${h} 0 0 1 ${x+w/2} ${y+h}`}" fill="none" stroke="#fff" opacity=".7"/>`};
+const bx=(x,y,w,h,f='#6b4a2c',r=2)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${f}" stroke="#2a1a0e" stroke-width="1.2"/>`;
+const ch=(x,y)=>`<rect x="${x-3.5}" y="${y-3.5}" width="7" height="7" rx="2" fill="#3d2a1b"/>`;
+const tbl=(x,y,w,h)=>{const n=Math.max(2,Math.floor(w/22));let c='';for(let i=0;i<n;i++){const cx=x+(w/n)*(i+.5);c+=ch(cx,y-6)+ch(cx,y+h+6)}return c+bx(x,y,w,h)};
+const rug=(x,y,w,h,c)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="${c}" opacity=".9" stroke="#e8d9a8" stroke-width="1.5"/>`;
+const plant=(x,y)=>`<circle cx="${x}" cy="${y}" r="7" fill="#2f7a3a"/><circle cx="${x}" cy="${y}" r="3.5" fill="#4fa152"/>`;
+const tree=(x,y,r)=>`<circle cx="${x}" cy="${y}" r="${r}" fill="#2f7a3a" stroke="#1f5a2a" stroke-width="2"/><circle cx="${x-r/3}" cy="${y-r/3}" r="${r/2}" fill="#4fa152"/>`;
+const shelf=(x,y,w)=>`<rect x="${x}" y="${y}" width="${w}" height="9" fill="url(#bk)" stroke="#1a0f06"/>`;
+const body=(x,y,rot=0,sc=1)=>`<g transform="translate(${x} ${y}) rotate(${rot}) scale(${sc})" fill="rgba(255,255,255,.14)" stroke="#fff" stroke-width="${2/sc}" stroke-linejoin="round" stroke-dasharray="${5/sc} ${3/sc}"><circle cy="-22" r="7"/><path d="M-9-13Q0-17 9-13L10 6Q0 10-10 6Z"/><path d="M-9-12L-22-1L-19 3L-8-3M9-12L22-1L19 3L8-3"/><path d="M-8 6L-12 34L-6 34L-1 8M8 6L12 34L6 34L1 8"/></g>`;
+const PH=['#b9c2c4','#c9baa2','#a9bcae','#c4aeb5','#b2b6cb'];
+const tk=(i,x,y)=>`<g filter="url(#sh)"><clipPath id="tk${i}"><circle cx="${x}" cy="${y}" r="12"/></clipPath><circle cx="${x}" cy="${y}" r="12" fill="${PH[i]}"/><g clip-path="url(#tk${i})" fill="#45443f"><circle cx="${x}" cy="${y-3}" r="5"/><ellipse cx="${x}" cy="${y+12}" rx="10" ry="8"/></g><circle cx="${x}" cy="${y}" r="12" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="${x+9}" cy="${y+9}" r="6.5" fill="#1c1b18" stroke="#fff" stroke-width="1.5"/><text x="${x+9}" y="${y+12.5}" text-anchor="middle" font-size="9" fill="#fff" font-family="Anton,Impact,sans-serif">${i+1}</text></g>`;
+const seats=(x,y,r,c)=>Array.from({length:r*c},(_,k)=>`<rect x="${x+(k%c)*17-3.5}" y="${y+Math.floor(k/c)*16-3.5}" width="7" height="7" rx="2" fill="#2a1a22"/>`).join('');
+const SC={
+ lib:BG('gs')+tree(372,28,15)+tree(340,34,10)+tree(372,244,10)
+ +`<rect x="318" y="168" width="68" height="64" fill="#cfeeee" fill-opacity=".85" stroke="#eaf7f5" stroke-width="3"/><path d="M352 168V232M318 200H386" stroke="#eaf7f5" stroke-width="1.5"/>`+plant(334,184)+plant(370,184)+plant(334,216)+plant(370,216)+lb(318,246,'Greenhouse')
+ +`<rect x="316" y="136" width="74" height="9" rx="4" fill="#1f5a2a" stroke="#14401d" stroke-width="1.5"/>`+lb(332,130,'Tall hedge')
+ +rm(10,10,150,110,'Dining room')+rm(160,10,130,110,'','dk')+lb(167,25,'Library')+rm(10,120,280,32,'','mb')+lb(130,140,'Hall')+rm(10,152,120,98,'Kitchen','kt')+rm(130,152,160,98,'Drawing room','cp')
+ +dr(70,118,24,6)+dr(215,118,24,6)+dr(287,48,6,26)+dr(50,150,24,6)+dr(190,150,24,6)+dr(158,60,6,24)
+ +rug(30,34,100,56,'#5a2a3a')+tbl(42,48,76,28)+bx(14,14,60,9,'#5a3d25')
+ +shelf(212,12,72)+rug(176,80,96,36,'#7a2f3a')+bx(200,46,52,20,'#4a3220')+ch(226,72)+body(222,98,90,.85)
+ +bx(14,124,40,24,'#b08a5a')+`<path d="M20 124V148M27 124V148M34 124V148M41 124V148M48 124V148" stroke="#6b4a2c"/>`+plant(274,136)
+ +bx(14,156,12,90,'#c9ced2')+bx(26,156,60,12,'#c9ced2')+bx(50,190,50,28,'#e9e4d6')
+ +bx(140,158,74,20,'#6b3a4a',6)+bx(152,194,50,20,'#5a3d25')+bx(226,156,50,10,'#8a8a8a')+plant(276,236),
+ vault:BG('pv')+rm(10,10,100,90,'Offices')+rm(110,10,180,90,'','mb')+lb(117,25,'Vault corridor')+rug(120,44,160,14,'#8a2f2f')+rm(290,10,100,100,'','mb',6)
+ +`<rect x="294" y="14" width="92" height="92" fill="#56616b"/><rect x="312" y="16" width="52" height="7" fill="#c9a24a" stroke="#6b5420"/>`+bx(370,32,14,18,'#3e4750')+bx(370,56,14,18,'#3e4750')+bx(370,80,14,18,'#3e4750')+lb(298,40,'Vault')
+ +rm(10,100,250,100,'Main gallery','mb')+rm(260,110,130,140,'Talk room','cp')+rm(10,200,250,50,'','mb')+lb(100,214,'Lobby')
+ +dr(288,48,6,26)+dr(170,98,40,6)+dr(100,198,60,6)+dr(258,150,6,30)+dr(108,40,6,24)+dr(100,246,30,6)
+ +bx(18,38,38,16,'#4a3220')+ch(37,60)+bx(64,38,38,16,'#4a3220')+ch(83,60)+plant(98,86)
+ +bx(70,130,18,18,'#cfc8b8')+bx(130,150,18,18,'#cfc8b8')+bx(190,130,18,18,'#cfc8b8')+bx(100,176,60,10,'#4a3a2a')
+ +seats(284,170,4,6)+bx(268,118,114,24,'#3a2a1f')+lb(274,134,'Stage')+bx(150,214,56,16,'#5a3d25')+lb(156,226,'Desk')+bx(16,208,44,34,'#7a5a3a')+lb(20,226,'Coats')
+ +bx(104,238,22,6,'#7a2f2f')+lb(136,244,'Entrance')
+ +`<path d="M62 10H104" stroke="#e8f6ff" stroke-width="6"/><path d="M62 10H104" stroke="#7cc0ff" stroke-width="3"/>`+lb(64,28,'Window')+body(340,74,90,.8),
+ train:BG('bl')
+ +`<path d="M44 40H22Q6 40 6 68Q6 96 22 96H44Z" fill="#2c3e36" stroke="#14201b" stroke-width="3"/><rect x="12" y="52" width="26" height="32" rx="12" fill="#3f5a4e" stroke="#14201b"/><circle cx="20" cy="68" r="5" fill="#14201b"/><rect x="30" y="50" width="12" height="36" fill="#1d2b25"/>`
+ +rm(48,40,64,56,'','wd')+rm(116,40,80,56,'','kt')+rm(200,40,192,56,'','dk')+`<rect x="202" y="80" width="188" height="14" fill="url(#cp)"/>`
+ +`<rect x="44" y="64" width="4" height="8" fill="${WL}"/><rect x="112" y="64" width="4" height="8" fill="${WL}"/><rect x="196" y="64" width="4" height="8" fill="${WL}"/>`
+ +bx(54,46,16,14,'#a77b4a')+bx(74,46,16,14,'#a77b4a')+bx(54,62,16,14,'#a77b4a')+bx(80,76,26,14,'#5a3d25')
+ +bx(124,46,16,12,'#f6f2e8')+bx(148,46,16,12,'#f6f2e8')+bx(172,46,16,12,'#f6f2e8')+bx(124,78,16,12,'#f6f2e8')+bx(148,78,16,12,'#f6f2e8')+bx(172,78,16,12,'#f6f2e8')
+ +Array.from({length:8},(_,k)=>{const x=200+24*k;return `<path d="M${x} 40V80" stroke="${WL}" stroke-width="2"/><rect x="${x+4}" y="38" width="16" height="3" fill="#bfe3ff"/>`+lb(x+8,53,k+1)+bx(x+3,58,6,18,'#8a2f3d')+bx(x+15,58,6,18,'#8a2f3d')}).join('')
+ +`<rect x="344" y="40" width="24" height="40" fill="none" stroke="#ff7b6e" stroke-width="2.5"/>`+body(356,67,0,.3)+`<path d="M356 96V114" stroke="#fff" stroke-width="1.5"/>`
+ +`<path d="M198 40V96" stroke="#ffd54a" stroke-width="3.5"/><path d="M198 96V118" stroke="#fff" stroke-width="1.5"/>`
+ +lb(8,112,'Engine')+lb(52,112,'Baggage')+lb(118,112,'Dining car')+lb(204,112,'Sleeping car')+lb(150,128,'Closed door')+lb(290,128,'Body, compartment 7')
+};
+function sceneHTML(ex){
+ const gs=C.gs||1;let g='',t='';
+ ex.forEach((i,n)=>{const it=(C.spots||{})[i];if(!it)return;
+  g+='<g class="ev">'+it.map(([k,x,y])=>gs===1?GL[k](x,y):`<g transform="translate(${x*(1-gs)} ${y*(1-gs)}) scale(${gs})">${GL[k](x,y)}</g>`).join('')+'</g>';
+  const x=it[0][1],y=it[0][2],my=C.my||Math.max(14,y-24);
+  if(my+9<y-5)g+=`<path d="M${x} ${my+9}V${y-5}" stroke="#c9302a" stroke-width="2"/>`;
+  g+=`<circle cx="${x}" cy="${my}" r="10" fill="#c9302a" stroke="#fff" stroke-width="2"/><text x="${x}" y="${my+4.5}" text-anchor="middle" font-size="13" fill="#fff" font-family="Anton,Impact,sans-serif">${LET[n]}</text>`});
+ C.sus.forEach((_,i)=>{const a=(C.at||{})[i];if(a&&(S.done||S.asked.includes(i)))t+=tk(i,a[0],a[1])});
+ return `<figure class="scene"><svg viewBox="0 0 400 ${C.vh||260}" role="img" aria-label="${C.place}">${SC[C.scene]}${g}${t}</svg><figcaption><span>${C.place}</span><small>Numbers: where each suspect says they were. Letters: evidence. Check what people say they could see.</small></figcaption></figure>`;
+}
+function render(){
+ const left=3-S.wrong.length;
+ const order=S.asked.concat(S.done?C.sus.map((_,i)=>i).filter(i=>!S.asked.includes(i)):[]);
+ const ex=order.filter(i=>C.sus[i][4]);
+ const menuBtn=`<button class="menu" id="menu" aria-label="Open case archive"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>`;
+ if(S.done&&!review){
+  const g=C.sus[C.culprit];
+  let e=`<div class="narrow"><header class="mast"><div><h1>Daily Whodunit</h1></div>${menuBtn}</header>
+  <section class="verdict ${S.won?'won':'lost'}"><p class="sub">Case file No. ${caseNo}: ${C.title}</p><div class="sw"><div class="stamp">${S.won?'Case closed':'Unsolved'}</div></div><p class="score">${score()}<small>/100</small></p><h2>${S.won?'You caught ':'It was '}${g[1]}, ${g[2].toLowerCase()}</h2><p>${C.reveal}</p><pre id="sharetxt">${shareText()}</pre><p class="note">Streak: ${stats.streak} day${stats.streak===1?'':'s'}. Solved ${stats.wins} of ${stats.played}. ${dayNum===TODAY?'A new case arrives tomorrow.':'Archive cases do not count toward your streak.'}</p></section>
+  <div class="endbtns"><button class="accuse" id="copy">Copy result</button><button class="plain" id="another">Play another case</button><button class="plain" id="review">Review the case file</button></div></div>`;
+  if(menuOpen)e+=archiveHTML();
+  $('#app').innerHTML=e;
+  if(!menuOpen)scrollTo(0,0);
+  return;
+ }
+ let h=`<header class="mast"><div><h1>Daily Whodunit</h1><p class="sub">Case file No. ${caseNo}${dayNum===TODAY?'':', from the archive'}</p></div>${menuBtn}</header>
+ <div class="streak"><span>Streak<b>${stats.streak}</b></span><span>Solved<b>${stats.wins}/${stats.played}</b></span></div>
+ <div class="tabs"><button data-tab="ev" class="${tab==='ev'?'on':''}">Case file (${ex.length})</button><button data-tab="su" class="${tab==='su'?'on':''}">Suspects (${S.asked.length}/5)</button></div>
+ <div class="cols"><div class="pane left${tab==='ev'?'':' off'}">
+ <section class="file"><div class="tab">Case ${caseNo}</div><h2>${C.title}</h2><p>${C.intro}</p><p class="rule">The rule: exactly one suspect lied to the police, and that is the killer. Everyone else told the truth. Check each claim against the map.</p></section>${sceneHTML(ex)}
+ <h3>Evidence</h3><div class="exh">`;
+ if(!ex.length)h+=`<div class="empty">Nothing pinned yet. Question a suspect to hear their statement and see what evidence turns up.</div>`;
+ ex.forEach((i,n)=>{h+=`<article class="slip r${n%4}"><span class="lbl">Exhibit ${LET[n]}</span><span class="src">From questioning ${C.sus[i][1]}</span><p>${C.sus[i][4]}</p></article>`});
+ h+=`</div></div><div class="pane right${tab==='su'?'':' off'}"><h3>Suspects</h3><div class="sus">`;
+ C.sus.forEach((s,i)=>{
+  const w=S.wrong.includes(i),g=S.done&&i===C.culprit,known=S.done||S.asked.includes(i);
+  const stamp=w?' data-stamp="Innocent"':g?' data-stamp="Guilty"':'';
+  let acts='';
+  if(!S.done){
+   if(!known)acts+=`<button class="qbtn" data-q="${i}">Question${S.asked.length?' (-15 pts)':' (free)'}</button>`;
+   if(!w)acts+=`<button class="pick${sel===i?' on':''}" data-p="${i}">${sel===i?'Selected':'Pick as killer'}</button>`;
+  }
+  h+=`<div class="s${w?' cleared':''}${sel===i?' sel':''}${g?' guilty':''}" data-i="${i}"${stamp}><span class="plate"><i>${i+1}</i></span><span class="info"><strong>${s[1]}</strong><em>${s[2]}</em>${known?`<small><span class="st">Statement</span>${s[3].replace(/^Says:\s*/,'')}</small>`:`<small class="unk">Not questioned yet.</small>`}${acts?`<span class="acts">${acts}</span>`:''}</span></div>`;
+ });
+ h+=`</div></div></div>`;
+ if(!S.done)h+=`<div class="bar"><span class="lives">Questions asked: ${S.asked.length}. Accusations left: ${'\u25CF'.repeat(left)}${'\u25CB'.repeat(3-left)}</span><button class="accuse" id="acc"${sel===null?' disabled':''}>${sel===null?'Pick a suspect':'Accuse '+C.sus[sel][1]}</button></div>`;
+ else h+=`<div class="bar"><span class="lives">Reviewing a finished case</span><button class="accuse" id="back">Back to results</button></div>`;
+ if(menuOpen)h+=archiveHTML();
+ $('#app').innerHTML=h;
+ drawStrings();
+}
+$('#app').addEventListener('click',async e=>{
+ if(e.target.classList.contains('ov')){menuOpen=false;render();return}
+ const t=e.target.closest('button');if(!t)return;
+ if(t.dataset.tab){tab=t.dataset.tab;render();return}
+ if(t.id==='menu'){menuOpen=true;render();return}
+ if(t.id==='closem'){menuOpen=false;render();return}
+ if(t.id==='another'){menuOpen=true;render();return}
+ if(t.id==='review'){review=true;render();scrollTo(0,0);return}
+ if(t.id==='back'){review=false;render();return}
+ if(t.classList.contains('day')){setDay(+t.dataset.n);menuOpen=false;render();scrollTo(0,0);return}
+ if(t.dataset.q){S.asked.push(+t.dataset.q);save('ww3:'+key,S)}
+ else if(t.dataset.p){sel=+t.dataset.p}
+ else if(t.id==='acc'&&sel!==null){
+  if(sel===C.culprit)finish(true);
+  else{S.wrong.push(sel);if(S.wrong.length>=3)finish(false)}
+  sel=null;save('ww3:'+key,S)}
+ else if(t.id==='copy'){
+  try{await navigator.clipboard.writeText(shareText());t.textContent='Copied'}
+  catch(err){const r=document.createRange();r.selectNodeContents($('#sharetxt'));const g=getSelection();g.removeAllRanges();g.addRange(r);t.textContent='Selected. Copy it manually.'}
+  return}
+ render();
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&menuOpen){menuOpen=false;render()}});
+addEventListener('resize',drawStrings);
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(drawStrings);
+render();
+</script>
+</body>
+</html>
